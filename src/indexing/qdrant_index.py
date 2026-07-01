@@ -41,21 +41,33 @@ class QdrantIndexManager:
         Creates the Qdrant collection sized to the embedding dimension if it does not exist.
         If force=True, deletes the existing collection first.
         """
-        # Delete existing collection if force deletion is requested.
-        if force and self.client.collection_exists(collection_name=self.collection_name):
-            log.info("deleting_existing_qdrant_collection", collection=self.collection_name)
-            self.client.delete_collection(collection_name=self.collection_name)
+        # Retrieve the list of collections currently stored in Qdrant.
+        existing_collections = self.client.get_collections().collections
+        # Check if the configured collection name is in the list of existing collections.
+        collection_exists = any(c.name == self.collection_name for c in existing_collections)
 
-        # Skip creation if the collection already exists.
-        if self.client.collection_exists(collection_name=self.collection_name):
+        # If forced recreation is requested and the collection exists, delete it first.
+        if force and collection_exists:
+            # Log the deletion event.
+            log.info("deleting_existing_qdrant_collection", collection=self.collection_name)
+            # Issue the delete request to Qdrant.
+            self.client.delete_collection(collection_name=self.collection_name)
+            # Update the flag since the collection is now deleted.
+            collection_exists = False
+
+        # If the collection exists, log it and return early to avoid recreation.
+        if collection_exists:
+            # Log that the collection already exists.
             log.info("qdrant_collection_exists", collection=self.collection_name)
+            # Return from the function.
             return
 
         # Map distance metric configuration string to Qdrant models Distance object.
+        # "euclidean" maps to Distance.EUCLID in the Qdrant SDK.
         distance_map = {
             "cosine": qmodels.Distance.COSINE,
             "dot": qmodels.Distance.DOT,
-            "euclidean": qmodels.Distance.EUCLIDEAN
+            "euclidean": qmodels.Distance.EUCLID
         }
         # Fetch the distance metric from config. Default to cosine.
         q_distance = distance_map.get(cfg.qdrant.distance.lower(), qmodels.Distance.COSINE)

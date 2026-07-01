@@ -9,7 +9,8 @@ from __future__ import annotations # Allow self-referencing type annotations.
 import os # Standard library module for file path operations.
 from pathlib import Path # Standard library module for filesystem paths.
 from typing import List, Optional # Type helpers.
-from src.ingestion.edgar_client import download_filing_html, fetch_filing_index, _resolve_cik # Edgar clients.
+from src.ingestion.edgar_client import download_filing_html, fetch_filing_index # Edgar clients.
+from src.ingestion.run_ingest import _resolve_cik # Import CIK resolution helper from the ingestion CLI.
 from src.ingestion.manifest import FilingManifest # Manifest database.
 from src.parsing.html_parser import parse_filing # HTML document parser.
 from src.chunking.structure_aware_chunker import StructureAwareChunker # Structural chunker.

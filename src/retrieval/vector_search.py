@@ -58,11 +58,15 @@ def _sync_vector_search(
 
     try:
         # Search Qdrant for vectors closest to our query vector under the filters.
-        # We specify the search distance configuration from the collection.
+        # We use the search method to find nearest neighbors.
         hits = client.search(
+            # Pass the collection name where we want to search.
             collection_name=cfg.qdrant.collection_name,
+            # Pass the query vector embedding.
             query_vector=query_vector,
+            # Pass the metadata filter conditions.
             query_filter=qd_filter,
+            # Set the maximum number of closest matches to return.
             limit=top_k
         )
         

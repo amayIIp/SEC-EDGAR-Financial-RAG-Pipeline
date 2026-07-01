@@ -83,8 +83,13 @@ def main(query: str) -> None:
     # Connect to Qdrant.
     qd_client = QdrantClient(host=cfg.qdrant.host, port=cfg.qdrant.port)
     
+    # Check if the collection name is in the list of existing collections returned by Qdrant.
+    existing_collections = qd_client.get_collections().collections
+    # Check if any collection matches the configured collection name.
+    collection_exists = any(c.name == cfg.qdrant.collection_name for c in existing_collections)
+
     # Check if collection exists.
-    if not qd_client.collection_exists(collection_name=cfg.qdrant.collection_name):
+    if not collection_exists:
         console.print(f"[red]Qdrant collection '{cfg.qdrant.collection_name}' does not exist. Run indexing first.[/red]")
         return
         
@@ -96,8 +101,11 @@ def main(query: str) -> None:
     
     # Execute the nearest-neighbor search.
     qd_hits = qd_client.search(
+        # Specify the target Qdrant collection.
         collection_name=cfg.qdrant.collection_name,
+        # Pass the calculated query vector.
         query_vector=query_vector,
+        # Limit the results to top-5 nearest neighbors.
         limit=5
     )
     

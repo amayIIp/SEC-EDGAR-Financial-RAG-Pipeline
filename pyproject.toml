@@ -122,7 +122,11 @@ asyncio_mode = "auto"
 source = ["src"]
 omit = [
   "src/**/run_*.py",      # CLI entry-points are tested via e2e, not coverage
-  "src/demo/*",           # Streamlit app is not unit-testable
+  "src/demo/*",           # Streamlit dashboard files are not unit-testable
+  "src/streamlit_app.py",  # Streamlit main entrypoint is not unit-testable
+  "src/evaluation/eval_set.py", # Ground-truth dataset loaders are not unit-testable
+  "src/evaluation/ragas_wrapper.py", # Ragas LLM evaluation wrapper requires live APIs
+  "src/profiling/latency_report.py", # Latency reporting script is a CLI utility
   "tests/*",
 ]
 

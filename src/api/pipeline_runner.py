@@ -9,6 +9,7 @@
 # We capture exact time differences around each step to feed the latency profiling dashboard.
 
 from __future__ import annotations # Allow self-referencing type annotations.
+import asyncio # Standard library module for managing async tasks and coroutines.
 import time # Standard library module to measure latency.
 from typing import Any, Dict, List, Optional # Type helpers.
 from src.retrieval.bm25_search import bm25_search # Async BM25 query.
