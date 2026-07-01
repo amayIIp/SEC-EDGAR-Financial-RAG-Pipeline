@@ -1,0 +1,70 @@
+# docker-compose.yml
+# This configuration spins up the complete SEC RAG application stack.
+# It starts Qdrant (vector db), Elasticsearch (lexical db), FastAPI (backend), and Streamlit (frontend).
+
+version: '3.8'
+
+services:
+  # Qdrant vector database.
+  qdrant:
+    image: qdrant/qdrant:v1.7.4
+    container_name: sec_qdrant_db
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: always
+
+  # Elasticsearch lexical keyword search engine.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    container_name: sec_elasticsearch_db
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    restart: always
+
+  # FastAPI backend service which serves search and query endpoints.
+  fastapi_api:
+    build: . # Build the image using the local Dockerfile.
+    container_name: sec_fastapi_app
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      # Inject URLs pointing to the Qdrant and Elasticsearch services inside the Docker bridge network.
+      - QDRANT_URL=http://qdrant:6333
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - COHERE_API_KEY=${COHERE_API_KEY}
+      - OLLAMA_URL=http://host.docker.internal:11434 # Point to Ollama running on the host OS.
+    # Ensure databases start before building/starting the API service.
+    depends_on:
+      - qdrant
+      - elasticsearch
+    restart: always
+
+  # Streamlit frontend service which serves the dashboard.
+  streamlit_ui:
+    build: .
+    container_name: sec_streamlit_app
+    command: streamlit run src/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      # Redirect web UI request endpoints to the FastAPI container name inside the Docker network.
+      - API_URL=http://fastapi_api:8000
+    depends_on:
+      - fastapi_api
+    restart: always
+
+volumes:
+  qdrant_data:
+  es_data:

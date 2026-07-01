@@ -1,0 +1,339 @@
+# =============================================================================
+# requirements.txt — SEC EDGAR Financial RAG Pipeline
+# =============================================================================
+#
+# PINNING POLICY
+# --------------
+# All versions are pinned with >= minimum + < next breaking major so pip's
+# resolver can satisfy transitive constraints without silent upgrades that
+# break the pipeline.  Run `pip install -r requirements.txt` inside a fresh
+# virtual-env (Python 3.10 or 3.11 recommended).
+#
+# GROUP ORDER mirrors the pipeline execution order so the file doubles as
+# architecture documentation.  Each group is self-contained: you can comment
+# out a whole group if you are not running that phase locally.
+#
+# TO CREATE A LOCKED FILE (recommended for CI / Docker):
+#   pip install pip-tools
+#   pip-compile requirements.txt -o requirements.lock
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# [0] SHARED INFRASTRUCTURE
+# Used by every module in the project.
+# -----------------------------------------------------------------------------
+
+# Pydantic v2 — data validation and settings management (reads config.yaml,
+# validates API request/response schemas, enforces Chunk dataclass contracts).
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0          # reads .env + YAML into typed Settings objects
+
+# PyYAML — parses configs/config.yaml into Python dicts.
+PyYAML>=6.0,<7.0
+
+# python-dotenv — loads .env files into os.environ so API keys stay out of code.
+python-dotenv>=1.0,<2.0
+
+# Structlog — structured JSON logging with key=value pairs and request-id
+# propagation across async contexts; far more useful than stdlib logging for
+# debugging a multi-stage pipeline.
+structlog>=24.0,<25.0
+
+# Tenacity — retry logic with exponential back-off for API calls (SEC EDGAR,
+# OpenAI, Cohere).  Replaces hand-rolled retry loops everywhere.
+tenacity>=8.2,<9.0
+
+# tqdm — progress bars for batch operations (embedding, indexing, eval runs).
+tqdm>=4.65,<5.0
+
+# Rich — pretty terminal output: tables, syntax-highlighted tracebacks,
+# progress columns.  Used in CLI scripts (run_search_cli.py, latency_report.py).
+rich>=13.0,<14.0
+
+# click — argument parsing for all run_*.py CLI entry-points.
+# Chosen over argparse for composable sub-commands and automatic --help generation.
+click>=8.1,<9.0
+
+# python-dateutil — robust date string parsing for filing dates coming off EDGAR.
+python-dateutil>=2.8,<3.0
+
+# orjson — fast JSON serialisation used in profiling log writers and JSONL output.
+# 3-5× faster than stdlib json for large chunk dumps.
+orjson>=3.9,<4.0
+
+
+# -----------------------------------------------------------------------------
+# [1] INGESTION — downloading raw filings from SEC EDGAR
+# -----------------------------------------------------------------------------
+
+# Requests — synchronous HTTP client for EDGAR API calls.
+# We use synchronous requests (not httpx) here because EDGAR requires sequential
+# rate-limiting (10 req/s) which is simpler to enforce in a sync loop.
+requests>=2.31,<3.0
+
+# httpx — async HTTP client used in the FastAPI service layer (async endpoints).
+httpx>=0.25,<1.0
+
+# aiohttp — async HTTP alternative; used in ingestion when parallel ticker
+# downloads are enabled (with asyncio.Semaphore for rate-limit enforcement).
+aiohttp>=3.9,<4.0
+
+# aiofiles — async file I/O for writing raw HTML files without blocking the
+# event loop during parallel ingestion runs.
+aiofiles>=23.0,<24.0
+
+
+# -----------------------------------------------------------------------------
+# [2] PARSING — converting messy SEC HTML into structured JSON
+# -----------------------------------------------------------------------------
+
+# BeautifulSoup4 — HTML/XML parsing library; primary parser for SEC filings.
+beautifulsoup4>=4.12,<5.0
+
+# lxml — fast C-based XML/HTML parser used as the BeautifulSoup backend.
+# Much more lenient with malformed HTML than html.parser; required for SEC filings
+# which frequently have unclosed tags and stray XBRL inline elements.
+lxml>=4.9,<6.0
+
+# html5lib — fallback parser for the most severely malformed filings that lxml
+# still cannot handle.  Slower but more spec-compliant.
+html5lib>=1.1,<2.0
+
+# pdfplumber — used only when the pipeline is pointed at PDF versions of filings
+# (optional; the primary path is HTML).  Extracts text and tables from PDFs.
+pdfplumber>=0.10,<1.0
+
+# unstructured — document parsing library that handles mixed HTML/PDF/DOCX;
+# used as an alternative/complement to BeautifulSoup for complex layouts.
+# Pin the extras to avoid pulling in unnecessary heavy dependencies.
+unstructured>=0.10,<1.0
+
+
+# -----------------------------------------------------------------------------
+# [3] CHUNKING — splitting parsed documents into indexable chunks
+# -----------------------------------------------------------------------------
+
+# tiktoken — OpenAI's BPE tokeniser; used to count tokens accurately in all
+# three chunkers so chunk_size_tokens is respected regardless of word length.
+# Also used for context-window token-counting in the generation stage.
+tiktoken>=0.5,<1.0
+
+# sentence-transformers — loads all-MiniLM-L6-v2 for the SemanticChunker's
+# sentence-level cosine-similarity boundary detection.  Also loads BGE-large
+# for the main embedding provider and BGE-reranker for the reranking stage.
+# Single package covers chunking + embedding + reranking for all local models.
+sentence-transformers>=2.6,<4.0
+
+# numpy — array math used in SemanticChunker for cosine similarity computation
+# over sentence embedding matrices.
+numpy>=1.24,<2.0
+
+# scipy — used in SemanticChunker for cdist (pairwise cosine distances) and
+# in the latency report for p50/p95/p99 percentile calculations.
+scipy>=1.11,<2.0
+
+# scikit-learn — used for cosine_similarity utility in semantic cache comparison
+# and in the eval harness for Kendall-tau rank correlation.
+scikit-learn>=1.3,<2.0
+
+
+# -----------------------------------------------------------------------------
+# [4] INDEXING — embedding generation + loading into OpenSearch and Qdrant
+# -----------------------------------------------------------------------------
+
+# openai — official OpenAI Python SDK; used for:
+#   - text-embedding-3-small (embedding provider)
+#   - gpt-4o-mini (generation + LLM-judge + context compression)
+openai>=1.10,<2.0
+
+# qdrant-client — official Qdrant Python client; handles collection creation,
+# upsert batches, filtered vector search, and payload index management.
+qdrant-client>=1.7,<2.0
+
+# opensearch-py — official OpenSearch Python client (AWS-maintained fork of
+# elasticsearch-py 7.x).  Used for BM25 index creation, bulk indexing, and
+# full-text search with metadata filters.
+opensearch-py>=2.3,<3.0
+
+# elasticsearch — kept as an alternative if the stack uses Elastic instead of
+# OpenSearch.  The two clients share almost identical APIs.
+elasticsearch>=8.10,<9.0
+
+# torch — PyTorch; required by sentence-transformers for local model inference.
+# The CPU-only wheel is sufficient for embedding + reranking on a dev machine;
+# install the CUDA wheel separately for GPU acceleration.
+# See: https://pytorch.org/get-started/locally/
+torch>=2.1,<3.0
+
+# datasets — Hugging Face datasets library; required by RAGAS for building the
+# evaluation Dataset object and by some sentence-transformers utilities.
+datasets>=2.15,<4.0
+
+# huggingface-hub — manages model downloads for sentence-transformers models
+# (BGE-large, BGE-reranker, all-MiniLM).
+huggingface-hub>=0.20,<1.0
+
+
+# -----------------------------------------------------------------------------
+# [5] RETRIEVAL — hybrid BM25 + vector search and RRF fusion
+# -----------------------------------------------------------------------------
+# No additional packages beyond those already listed in [4].
+# BM25 search uses opensearch-py.
+# Vector search uses qdrant-client.
+# RRF fusion is implemented in pure Python (~15 lines, no dependency).
+# asyncio is stdlib.
+
+
+# -----------------------------------------------------------------------------
+# [6] RERANKING — Cohere API + local BGE CrossEncoder
+# -----------------------------------------------------------------------------
+
+# cohere — official Cohere Python SDK; used for the rerank-english-v3.0
+# reranking API endpoint.
+cohere>=4.40,<6.0
+
+
+# -----------------------------------------------------------------------------
+# [7] GENERATION — LLM context packing and answer synthesis
+# -----------------------------------------------------------------------------
+
+# anthropic — official Anthropic Python SDK; used for Claude 3 Haiku/Sonnet
+# generation backend.
+anthropic>=0.20,<1.0
+
+# ollama — Python client for the local Ollama REST API (Llama 3.1 8B).
+# Handles streaming and non-streaming generation requests.
+ollama>=0.1,<1.0
+
+
+# -----------------------------------------------------------------------------
+# [8] EVALUATION — metrics, RAGAS, LLM-judge scoring
+# -----------------------------------------------------------------------------
+
+# ragas — RAG evaluation framework; computes faithfulness, answer relevancy,
+# context precision, and context recall using LLM-as-a-judge internals.
+ragas>=0.1,<1.0
+
+# pandas — dataframe operations for eval result tables, metric aggregations,
+# and CSV export in run_eval_matrix.py.
+pandas>=2.0,<3.0
+
+# tabulate — formats pandas DataFrames as clean ASCII/Markdown tables for
+# terminal output and README result sections.
+tabulate>=0.9,<1.0
+
+
+# -----------------------------------------------------------------------------
+# [9] PROFILING AND OBSERVABILITY
+# -----------------------------------------------------------------------------
+
+# opentelemetry-sdk — core OpenTelemetry tracing SDK; wraps pipeline stages
+# with spans that are exportable to Jaeger or any OTLP-compatible backend.
+opentelemetry-sdk>=1.20,<2.0
+
+# opentelemetry-api — public API surface (decorators, context propagation).
+opentelemetry-api>=1.20,<2.0
+
+# opentelemetry-exporter-otlp — exports traces to a local Jaeger instance
+# (or any OpenTelemetry collector) via gRPC or HTTP.
+opentelemetry-exporter-otlp>=1.20,<2.0
+
+# opentelemetry-instrumentation-fastapi — auto-instruments FastAPI endpoints
+# with request-level spans (adds trace-id to every /query call).
+opentelemetry-instrumentation-fastapi>=0.41b0
+
+# redis — used for the production-grade exact-match query cache backend.
+# The in-memory dict cache in cache.py is used in dev; Redis replaces it in prod.
+redis>=5.0,<6.0
+
+
+# -----------------------------------------------------------------------------
+# [10] API LAYER — FastAPI service
+# -----------------------------------------------------------------------------
+
+# fastapi — async web framework for /query, /debug, /health endpoints.
+fastapi>=0.110,<1.0
+
+# uvicorn — ASGI server that runs the FastAPI application.
+uvicorn[standard]>=0.27,<1.0
+# 'standard' extra pulls in: uvloop (faster event loop on Linux/Mac),
+# httptools (fast HTTP parser), watchfiles (hot-reload), websockets.
+
+# python-multipart — required by FastAPI for form-data parsing (file uploads
+# are used in the optional direct-filing-upload endpoint).
+python-multipart>=0.0.9,<1.0
+
+# starlette — ASGI toolkit underlying FastAPI; pinned transitively by FastAPI
+# but listed explicitly for the TestClient used in e2e tests.
+starlette>=0.36,<1.0
+
+
+# -----------------------------------------------------------------------------
+# [11] DEMO LAYER — Streamlit frontend
+# -----------------------------------------------------------------------------
+
+# streamlit — interactive web UI framework for the demo dashboard.
+streamlit>=1.32,<2.0
+
+# plotly — interactive charts (per-stage latency bar chart, recall curves);
+# renders inside Streamlit via st.plotly_chart.
+plotly>=5.18,<6.0
+
+# altair — declarative statistical visualisation; used as an alternative to
+# plotly for simpler inline charts in the Streamlit app.
+altair>=5.0,<6.0
+
+
+# -----------------------------------------------------------------------------
+# [12] TESTING
+# -----------------------------------------------------------------------------
+
+# pytest — test runner for unit, integration, and e2e test suites.
+pytest>=8.0,<9.0
+
+# pytest-asyncio — extends pytest to support async test functions (needed for
+# testing async retrieval and FastAPI pipeline_runner functions).
+pytest-asyncio>=0.23,<1.0
+
+# pytest-cov — measures code coverage during test runs; integrated into CI.
+pytest-cov>=4.1,<5.0
+
+# httpx — also used as the test client for FastAPI endpoints in e2e tests
+# (starlette's TestClient is synchronous; httpx's AsyncClient is async-native).
+# Already listed in [1]; repeated here for discoverability.
+
+# respx — mocks httpx requests in unit tests (e.g. mock EDGAR API responses
+# without hitting the network).
+respx>=0.20,<1.0
+
+# pytest-mock — thin wrapper around unittest.mock; simplifies patching in tests.
+pytest-mock>=3.12,<4.0
+
+# freezegun — freezes datetime.now() in tests that assert on filing date ranges.
+freezegun>=1.4,<2.0
+
+
+# -----------------------------------------------------------------------------
+# [13] DEVELOPMENT TOOLING (install with: pip install -r requirements-dev.txt)
+# Not needed at runtime; listed here for completeness.
+# Move to a separate requirements-dev.txt if you want a leaner prod image.
+# -----------------------------------------------------------------------------
+
+# black — deterministic Python code formatter (line-length 100).
+black>=24.0,<25.0
+
+# ruff — extremely fast Python linter (replaces flake8 + isort + pyupgrade).
+ruff>=0.3,<1.0
+
+# mypy — static type checker; validates Pydantic models and function signatures.
+mypy>=1.8,<2.0
+
+# pre-commit — runs black + ruff + mypy automatically before every git commit.
+pre-commit>=3.6,<4.0
+
+# ipykernel — Jupyter kernel for the notebooks/ directory.
+ipykernel>=6.29,<7.0
+
+# pip-tools — generates requirements.lock from requirements.txt via pip-compile.
+pip-tools>=7.4,<8.0

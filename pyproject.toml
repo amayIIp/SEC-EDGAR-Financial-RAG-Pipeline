@@ -1,0 +1,133 @@
+# pyproject.toml
+# Build metadata and tool configuration for the SEC EDGAR Financial RAG Pipeline.
+# All linting, formatting, type-checking, and test settings live here so every
+# tool reads the same source of truth rather than scattered config files.
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "sec-rag-pipeline"
+version = "0.1.0"
+description = "Production-grade hybrid RAG pipeline over SEC EDGAR filings (10-K, 10-Q, 8-K)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# ── Black — code formatter ────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311"]
+# Exclude auto-generated or vendor files from formatting.
+exclude = '''
+/(
+  \.git
+  | \.venv
+  | build
+  | dist
+  | notebooks
+)/
+'''
+
+# ── Ruff — linter (replaces flake8, isort, pyupgrade, pep8-naming) ────────────
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # Pyflakes (unused imports, undefined names)
+  "I",   # isort (import ordering)
+  "N",   # pep8-naming
+  "UP",  # pyupgrade (modernise syntax)
+  "B",   # flake8-bugbear (common bug patterns)
+  "C4",  # flake8-comprehensions
+  "SIM", # flake8-simplify
+  "RUF", # Ruff-native rules
+]
+ignore = [
+  "E501",  # line too long — Black handles this
+  "B008",  # do not perform function call in default argument (FastAPI pattern)
+  "N803",  # argument name should be lowercase — some ML APIs use X, y
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files may use assert statements and fixture magic that confuses some rules.
+"tests/**/*.py" = ["S101", "ANN"]
+# Notebooks are not formatted.
+"notebooks/**" = ["ALL"]
+# CLI entry-points use if __name__ == "__main__" which triggers some rules.
+"src/**/run_*.py" = ["T201"]  # allow print() in CLI scripts
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+force-sort-within-sections = true
+
+# ── Mypy — static type checker ────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.10"
+strict = true
+# Allow untyped definitions in test files to reduce boilerplate.
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+[[tool.mypy.overrides]]
+# Many ML libraries (sentence-transformers, cohere, ragas) lack complete stubs.
+module = [
+  "sentence_transformers.*",
+  "cohere.*",
+  "ragas.*",
+  "qdrant_client.*",
+  "opensearchpy.*",
+  "elasticsearch.*",
+  "unstructured.*",
+  "pdfplumber.*",
+  "ollama.*",
+  "bs4.*",
+  "lxml.*",
+  "plotly.*",
+  "altair.*",
+  "streamlit.*",
+]
+ignore_missing_imports = true
+
+# ── Pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+# Tell pytest where tests live and which paths to import from.
+testpaths = ["tests"]
+pythonpath = ["."]     # makes `from src.shared.config import ...` work in tests
+
+# Markers used to separate test tiers.
+# Run only unit tests (fast, no Docker):  pytest -m unit
+# Run only integration tests:             pytest -m integration
+# Run everything:                         pytest
+markers = [
+  "unit: fast tests with no external dependencies",
+  "integration: tests that require live Docker services (OpenSearch, Qdrant)",
+  "e2e: tests that spin up the full FastAPI app",
+]
+
+# Default options: verbose output, short tracebacks, coverage.
+addopts = "-v --tb=short --cov=src --cov-report=term-missing --cov-report=html"
+
+# asyncio mode for pytest-asyncio: "auto" means async test functions are
+# detected and run without needing the @pytest.mark.asyncio decorator.
+asyncio_mode = "auto"
+
+# ── Coverage ──────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["src"]
+omit = [
+  "src/**/run_*.py",      # CLI entry-points are tested via e2e, not coverage
+  "src/demo/*",           # Streamlit app is not unit-testable
+  "tests/*",
+]
+
+[tool.coverage.report]
+# Fail CI if coverage drops below this threshold.
+fail_under = 70
+show_missing = true
+skip_covered = false

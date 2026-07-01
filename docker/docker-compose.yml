@@ -1,0 +1,135 @@
+# docker/docker-compose.yml
+#
+# Spins up the infrastructure services required by the SEC RAG pipeline:
+#   • OpenSearch  — BM25 / lexical search engine (port 9200)
+#   • OpenSearch Dashboards — optional UI for index inspection (port 5601)
+#   • Qdrant      — vector store (ports 6333 HTTP, 6334 gRPC)
+#
+# The FastAPI backend and Streamlit frontend are NOT in this compose file by
+# default — run them locally with uvicorn and streamlit for hot-reload comfort
+# during development.  Add the app services back in for a full-stack Docker run.
+#
+# USAGE (from project root):
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml down -v   # -v removes volumes too
+#
+# PREREQUISITES:
+#   Docker >= 24.0, Docker Compose >= 2.20
+
+version: "3.9"
+
+# Named volumes persist data across container restarts.
+# Remove them explicitly with `docker volume rm` only when you want a clean slate.
+volumes:
+  opensearch_data:
+    driver: local
+  qdrant_data:
+    driver: local
+
+# A dedicated bridge network so services can reach each other by service name
+# (e.g. opensearch:9200 from within the FastAPI container).
+networks:
+  rag_net:
+    driver: bridge
+
+services:
+
+  # ── OpenSearch — BM25 lexical search ────────────────────────────────────────
+  # OpenSearch is the AWS-maintained fork of Elasticsearch 7.x.
+  # We disable security (TLS + auth) for local dev simplicity.
+  # NEVER disable security in a public or production deployment.
+  opensearch:
+    image: opensearchproject/opensearch:2.12.0
+    container_name: sec_opensearch
+    environment:
+      # Single-node mode: no cluster discovery needed.
+      - discovery.type=single-node
+      # Disable the security plugin entirely so HTTP calls need no credentials.
+      - plugins.security.disabled=true
+      # JVM heap: 1 GB min / 1 GB max — increase to 2 GB if indexing is slow.
+      # Rule of thumb: heap should not exceed 50% of available RAM.
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      # Disable OpenSearch's memory-lock requirement (not enforced in Docker).
+      - bootstrap.memory_lock=false
+    ports:
+      # 9200: HTTP REST API — used by opensearch-py client.
+      - "9200:9200"
+      # 9300: inter-node transport (not used in single-node, but exposed for tooling).
+      - "9300:9300"
+    volumes:
+      # Persist index data in a named Docker volume so it survives container restarts.
+      - opensearch_data:/usr/share/opensearch/data
+    networks:
+      - rag_net
+    ulimits:
+      # OpenSearch uses memory-mapped files; remove the default OS limit.
+      memlock:
+        soft: -1
+        hard: -1
+      # Increase the open-file-descriptor limit (Lucene opens many files per index).
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      # Poll the cluster health endpoint every 10 s; declare healthy when status is yellow or green.
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  # ── OpenSearch Dashboards — optional index browser ───────────────────────────
+  # Useful during development to inspect index mappings, run ad-hoc queries,
+  # and verify that bulk-indexed chunks look correct.
+  # Access at: http://localhost:5601
+  opensearch_dashboards:
+    image: opensearchproject/opensearch-dashboards:2.12.0
+    container_name: sec_opensearch_dashboards
+    environment:
+      # Point Dashboards at the OpenSearch service on the Docker bridge network.
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      # Disable the security plugin in Dashboards to match OpenSearch's setting.
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "5601:5601"
+    networks:
+      - rag_net
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: unless-stopped
+    # Comment out this service if you don't need the UI — it adds ~500 MB RAM.
+    profiles:
+      - dashboards   # only starts when: docker compose --profile dashboards up
+
+  # ── Qdrant — vector store ────────────────────────────────────────────────────
+  # Qdrant stores our dense vector embeddings and supports filtered ANN search.
+  # HTTP API on 6333; gRPC API on 6334 (higher throughput for batch upserts).
+  qdrant:
+    image: qdrant/qdrant:v1.8.3
+    container_name: sec_qdrant
+    ports:
+      # 6333: REST API — used by qdrant-client for standard operations.
+      - "6333:6333"
+      # 6334: gRPC API — used for high-throughput batch upserts during indexing.
+      - "6334:6334"
+    volumes:
+      # Persist collection data and HNSW index segments in a named volume.
+      - qdrant_data:/qdrant/storage
+    networks:
+      - rag_net
+    environment:
+      # Optional: set QDRANT__SERVICE__API_KEY to enable key-based auth.
+      # Leave unset for local dev.
+      - QDRANT__SERVICE__API_KEY=
+      # GRPC port — must match the exposed port above.
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      # Qdrant exposes a /healthz endpoint; check it every 10 s.
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    restart: unless-stopped

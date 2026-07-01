@@ -1,0 +1,399 @@
+# configs/config.yaml
+#
+# Master configuration file for the SEC EDGAR Financial RAG Pipeline.
+#
+# ── HOW TO USE ────────────────────────────────────────────────────────────────
+# Every tunable parameter lives here. Source code reads this file through
+# src/shared/config.py and never hard-codes values.
+# To run an experiment, copy this file (e.g. configs/exp_bge_semantic.yaml),
+# change the relevant section, and pass --config configs/exp_bge_semantic.yaml
+# to any run_*.py entry-point.
+# ── SECTIONS ──────────────────────────────────────────────────────────────────
+#   1.  ingestion       — EDGAR download settings
+#   2.  parsing         — HTML parser behaviour
+#   3.  chunking        — chunk size/overlap per strategy
+#   4.  embedding       — model selection and batching
+#   5.  opensearch      — BM25 index settings
+#   6.  qdrant          — vector DB collection settings
+#   7.  retrieval       — search depth and fusion constant
+#   8.  reranking       — model selection and top-N
+#   9.  generation      — LLM model, temperature, token limits
+#   10. evaluation      — metric thresholds and eval-set path
+#   11. profiling       — logging and caching behaviour
+#   12. api             — server host/port/workers
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── 1. INGESTION ──────────────────────────────────────────────────────────────
+ingestion:
+  # List of stock tickers to download filings for.
+  # Add or remove tickers here; ingestion script iterates this list.
+  tickers:
+    - AAPL
+    - MSFT
+    - AMZN
+    - GOOGL
+    - META
+    - TSLA
+    - NVDA
+    - NFLX
+    - JPM
+    - BAC
+    - GS
+    - JNJ
+    - PFE
+    - UNH
+    - XOM
+    - CVX
+    - DIS
+    - NFLX
+    - SBUX
+    - MCD
+    - KO
+    - PEP
+    - WMT
+    - TGT
+    - COST
+    - BA
+    - GE
+    - CAT
+    - MMM
+    - HON
+
+  # SEC form types to download. Extend to include 8-K if desired.
+  form_types:
+    - "10-K"
+    - "10-Q"
+
+  # Number of fiscal years of history to retrieve per ticker per form type.
+  # 3 years × 1 annual 10-K + 3 years × 4 quarterly 10-Q = ~15 filings per ticker.
+  years_of_history: 3
+
+  # SEC EDGAR enforces a maximum of 10 requests per second.
+  # We stay comfortably under that limit by sleeping between requests.
+  requests_per_second: 8  # conservative ceiling; reduces to ~0.125 s sleep
+
+  # User-Agent header required by SEC EDGAR. Replace with your real contact info.
+  # Format: "CompanyName AdminEmail"  (SEC policy — see https://www.sec.gov/developer)
+  user_agent: "SEC-RAG-Research contact@example.com"
+
+  # Where raw HTML files are saved on disk.
+  raw_data_dir: "data/raw"
+
+  # Path to the manifest CSV that tracks every downloaded filing.
+  manifest_path: "data/raw/manifest.csv"
+
+  # If true, skip files that already exist in raw_data_dir (idempotent re-runs).
+  skip_existing: true
+
+# ── 2. PARSING ────────────────────────────────────────────────────────────────
+parsing:
+  # Where parsed JSON files are written.
+  parsed_data_dir: "data/parsed"
+
+  # HTML parser backend used by BeautifulSoup.
+  # "lxml" is fastest and most lenient with malformed HTML (recommended).
+  # "html.parser" is stdlib fallback if lxml is unavailable.
+  bs4_parser: "lxml"
+
+  # Regex pattern that identifies SEC Item/Part header lines.
+  # Matches "Item 1.", "ITEM 1A.", "Item 1.01", "PART I", etc.
+  # Adjust capturing groups if edge-cases appear in validation output.
+  section_header_regex: >
+    ^\s*(item|part)\s+([0-9]+[a-z]?(?:\.[0-9]+)?)[.\s:\-]
+
+  # Minimum character length a text block must have to be kept as content.
+  # Shorter blocks are almost always boilerplate (navigation links, page numbers).
+  min_content_length: 80
+
+  # If true, strip XBRL inline tags (<ix:*>) before parsing.
+  strip_xbrl: true
+
+  # Known boilerplate phrases — paragraphs that start with any of these
+  # strings are dropped during boilerplate filtering.
+  boilerplate_prefixes:
+    - "Table of Contents"
+    - "Index to Financial Statements"
+    - "This page intentionally left blank"
+    - "Cautionary Note Regarding Forward-Looking"
+
+  # Maximum number of worker processes for parallel batch parsing.
+  # Set to 1 to debug parsing failures without multiprocessing noise.
+  parse_workers: 4
+
+# ── 3. CHUNKING ───────────────────────────────────────────────────────────────
+chunking:
+  # Output directory — one sub-folder per strategy.
+  chunks_dir: "data/chunks"
+
+  # Which tokenizer to use when counting tokens (tiktoken encoding name).
+  # "cl100k_base" matches GPT-4 / text-embedding-3-small.
+  token_encoding: "cl100k_base"
+
+  naive_fixed:
+    # Target chunk size in tokens.
+    chunk_size_tokens: 512
+    # Overlap between consecutive chunks, expressed as a fraction of chunk_size.
+    # 0.15 → 77 tokens overlap, preserving cross-boundary context.
+    overlap_fraction: 0.15
+
+  structure_aware:
+    # Maximum tokens per section-level chunk before recursive splitting kicks in.
+    max_section_tokens: 800
+    # Recursive split hierarchy: try splitting on these separators in order.
+    split_separators:
+      - "\n\n"   # paragraph break (preferred)
+      - "\n"     # single newline
+      - ". "     # sentence boundary (last resort within a sentence block)
+    # Number of sentences of surrounding context to prepend to table chunks.
+    table_context_sentences: 2
+    # Never exceed this many tokens even for a table chunk.
+    max_table_tokens: 1024
+
+  semantic:
+    # Lightweight local model used only for computing sentence similarities
+    # during chunking — NOT the main embedding model.
+    # Chosen for speed: ~80 ms / filing on CPU.
+    sentence_model: "sentence-transformers/all-MiniLM-L6-v2"
+    # Cosine similarity threshold: split here if similarity between
+    # consecutive sentence embeddings drops below this value.
+    # Lower → more splits (finer chunks); higher → fewer splits (coarser).
+    similarity_threshold: 0.50
+    # Merge any resulting chunk smaller than this token count into its neighbour.
+    min_chunk_tokens: 100
+    # Cap chunk size to avoid runaway merges.
+    max_chunk_tokens: 900
+    # Batch size when encoding sentences — keep small to avoid OOM on CPU.
+    sentence_encode_batch_size: 64
+
+# ── 4. EMBEDDING ──────────────────────────────────────────────────────────────
+embedding:
+  # Active embedding backend. Options: "openai" | "bge"
+  # Switch this to run the comparison experiment.
+  provider: "openai"
+
+  openai:
+    model: "text-embedding-3-small"
+    # Output vector dimension for text-embedding-3-small.
+    # Can be set lower (e.g. 512) using the 'dimensions' API param to save storage.
+    dimensions: 1536
+    # Number of texts sent per API call. OpenAI limit is 2048 inputs per request.
+    batch_size: 512
+    # Seconds to wait before retrying after a rate-limit (429) response.
+    retry_base_delay: 1.0
+    # Maximum number of retries before raising an exception.
+    max_retries: 5
+
+  bge:
+    model: "BAAI/bge-large-en-v1.5"
+    # Output vector dimension for bge-large-en-v1.5.
+    dimensions: 1024
+    # Texts encoded per forward pass through the transformer.
+    # Reduce if GPU OOM errors occur (e.g. 16 on an 8 GB GPU).
+    batch_size: 32
+    # Prepend this query instruction when encoding queries (BGE requirement).
+    # Leave empty for document encoding.
+    query_instruction: "Represent this sentence for searching relevant passages: "
+    # Use "cuda" for GPU, "cpu" to force CPU, "auto" to detect.
+    device: "auto"
+
+# ── 5. OPENSEARCH (BM25 INDEX) ────────────────────────────────────────────────
+opensearch:
+  host: "localhost"
+  port: 9200
+  # Name of the OpenSearch index used for BM25 chunk retrieval.
+  # Follows convention: sec_chunks_{chunking_strategy}_{embedding_provider}
+  index_name: "sec_chunks_v1"
+  # BM25 tuning parameters inside OpenSearch's similarity settings.
+  # k1: term frequency saturation point. Lower → less TF weighting.
+  # b:  document length normalisation. 0 = no normalisation, 1 = full.
+  bm25_k1: 1.2
+  bm25_b: 0.75
+  # Number of shards and replicas for the index (1 shard is fine for local dev).
+  shards: 1
+  replicas: 0
+  # Maximum fields for bulk index requests (tune for throughput vs memory).
+  bulk_batch_size: 500
+  # Timeout in seconds for bulk index requests.
+  bulk_timeout: "60s"
+
+# ── 6. QDRANT (VECTOR STORE) ─────────────────────────────────────────────────
+qdrant:
+  host: "localhost"
+  port: 6333
+  # Collection name — should encode the embedding model used since
+  # dimension sizes differ between providers.
+  collection_name: "sec_chunks_openai_v1"
+  # Distance metric for nearest-neighbour search.
+  # "Cosine" works well for normalised text embeddings (both OpenAI and BGE).
+  # "Dot" is equivalent when vectors are unit-normalised.
+  distance: "Cosine"
+  # HNSW index parameters. ef_construct and m control index quality vs build time.
+  # Higher m → better recall, more memory and build time.
+  hnsw_m: 16
+  hnsw_ef_construct: 100
+  # ef value used at query time. Higher → better recall, slower query.
+  hnsw_ef: 128
+  # Batch size for upsert operations.
+  upsert_batch_size: 256
+
+# ── 7. RETRIEVAL ──────────────────────────────────────────────────────────────
+retrieval:
+  # Default retrieval mode. Options: "hybrid" | "bm25_only" | "vector_only"
+  mode: "hybrid"
+
+  # Number of candidate chunks fetched from EACH index before fusion.
+  # Larger depth → better recall for RRF, but slower (more data to transfer).
+  retrieval_depth: 50
+
+  # Reciprocal Rank Fusion constant.
+  # k=60 is the standard default from the original RRF paper (Cormack 2009).
+  # Lower k → top-ranked results get a bigger score boost.
+  # Higher k → more uniform score distribution (less sensitive to top-rank).
+  rrf_k: 60
+
+  # Number of fused results returned by hybrid_search() before reranking.
+  # This is the pool the reranker scores — larger pool = better reranker recall
+  # but higher reranker latency.
+  pre_rerank_top_k: 50
+
+  # Metadata filter fields exposed to callers.
+  # Values of null mean "no filter applied".
+  default_filters:
+    ticker: null
+    filing_type: null
+    date_from: null   # ISO date string, e.g. "2021-01-01"
+    date_to: null
+
+# ── 8. RERANKING ──────────────────────────────────────────────────────────────
+reranking:
+  # Active reranker backend. Options: "cohere" | "bge" | "none"
+  provider: "cohere"
+
+  # Final number of chunks passed to the generation stage after reranking.
+  # These become the LLM's context window contents.
+  top_n: 8
+
+  cohere:
+    model: "rerank-english-v3.0"
+    # Cohere's rerank endpoint accepts at most 1000 documents per call.
+    # We stay well under that to avoid latency spikes.
+    max_docs_per_call: 200
+
+  bge:
+    model: "BAAI/bge-reranker-v2-m3"
+    # CrossEncoder encode batch size — reduce if GPU memory is limited.
+    batch_size: 16
+    # Use "cuda" for GPU, "cpu" to force CPU, "auto" to detect.
+    device: "auto"
+
+# ── 9. GENERATION ─────────────────────────────────────────────────────────────
+generation:
+  # Active generation backend. Options: "openai" | "anthropic" | "ollama"
+  provider: "openai"
+
+  # If true, run context compression before packing (see src/generation/context_compressor.py).
+  # Compresses each chunk to ~40% of its length using a cheap LLM call.
+  # Trade-off: saves context-window tokens; costs extra LLM latency + tokens.
+  use_context_compression: false
+
+  # Cosine similarity threshold above which two chunks are considered
+  # near-duplicates and the lower-scored one is dropped during packing.
+  dedup_similarity_threshold: 0.92
+
+  openai:
+    model: "gpt-4o-mini"
+    # Temperature 0.0 → deterministic outputs, reduces hallucination risk.
+    temperature: 0.0
+    # Hard cap on response tokens. 1024 is generous for most financial Q&A.
+    max_tokens: 1024
+    # Timeout in seconds before aborting an API call.
+    timeout: 30
+
+  anthropic:
+    model: "claude-3-haiku-20240307"
+    temperature: 0.0
+    max_tokens: 1024
+    timeout: 30
+
+  ollama:
+    model: "llama3.1:8b"
+    # Ollama server URL — change if running on a separate machine.
+    base_url: "http://localhost:11434"
+    temperature: 0.0
+    # Ollama accepts a "num_predict" option for max tokens.
+    num_predict: 1024
+    timeout: 120  # local inference is slower; allow more time
+
+  # Model used for context compression (should be cheap/fast).
+  compression_model: "gpt-4o-mini"
+  # Target fraction of original chunk length after compression.
+  compression_target_ratio: 0.40
+
+# ── 10. EVALUATION ────────────────────────────────────────────────────────────
+evaluation:
+  # Path to the 50-query golden eval set JSONL file.
+  eval_set_path: "data/eval/eval_set.jsonl"
+
+  # Output directory for eval run artefacts.
+  results_dir: "data/eval/results"
+
+  # k values for Recall@k and Precision@k metrics.
+  recall_k_values: [5, 10, 20]
+
+  # Minimum acceptable Recall@10 to consider a retrieval configuration "passing".
+  # Used by CI to flag regressions.
+  min_recall_at_10: 0.60
+
+  # Minimum RAGAS faithfulness score to consider generation "passing".
+  min_faithfulness: 0.70
+
+  # Minimum RAGAS answer relevancy score.
+  min_answer_relevancy: 0.65
+
+  # LLM-as-judge configuration.
+  judge:
+    model: "gpt-4o-mini"   # cheap model is fine for structured scoring
+    temperature: 0.0
+    # Score threshold: answers scoring below this are flagged as failures.
+    min_passing_score: 3   # out of 5
+
+  # Whether to run RAGAS evaluation (requires OpenAI key; adds latency).
+  run_ragas: true
+
+  # Whether to run LLM-judge scoring (adds cost proportional to eval set size).
+  run_llm_judge: true
+
+# ── 11. PROFILING ─────────────────────────────────────────────────────────────
+profiling:
+  # Directory where JSON-lines profile logs are written.
+  profiles_dir: "data/profiles"
+
+  # If true, every @profile_stage-decorated function writes a log entry.
+  enabled: true
+
+  # Exact-match query cache: if true, identical query strings return cached results.
+  exact_match_cache: true
+
+  # Semantic query cache: cache hit if new query embedding is above this threshold
+  # vs any cached query embedding. Set to 1.0 to disable semantic cache.
+  semantic_cache_threshold: 0.97
+
+  # Maximum number of entries in the in-memory semantic cache.
+  semantic_cache_max_entries: 1000
+
+  # Candidate pool sizes to test in the reduced-pool optimisation experiment.
+  pool_size_candidates: [50, 25, 15, 10]
+
+# ── 12. API ───────────────────────────────────────────────────────────────────
+api:
+  host: "0.0.0.0"
+  port: 8000
+  # Number of Uvicorn worker processes. Keep at 1 for local dev; scale up for prod.
+  workers: 1
+  # If true, Uvicorn reloads on source file changes (dev only).
+  reload: false
+  # CORS origins to allow. "*" permits all — restrict in production.
+  cors_origins:
+    - "*"
+  # Maximum time (seconds) before a /query request times out end-to-end.
+  request_timeout: 60
