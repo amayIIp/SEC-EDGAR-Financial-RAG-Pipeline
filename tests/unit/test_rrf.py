@@ -1,14 +1,7 @@
-# tests/unit/test_rrf.py
-# This module implements unit tests for the Reciprocal Rank Fusion (RRF) algorithm.
-# We test edge cases (empty search results, matching ranks, ties) to guarantee
-# that the fusion scoring arithmetic is correct and stable.
-
-from __future__ import annotations # Allow self-referencing type annotations.
-import pytest # Testing framework.
-from src.retrieval.rrf_fusion import rrf_fuse # Subject under test.
-from src.shared.models import BM25Result, Chunk, ChunkingStrategy, FilingType, VectorResult # Models.
-
-# Define a shared mock chunk helper function.
+from __future__ import annotations 
+import pytest 
+from src.retrieval.rrf_fusion import rrf_fuse 
+from src.shared.models import BM25Result, Chunk, ChunkingStrategy, FilingType, VectorResult 
 def _make_mock_chunk(chunk_id: str) -> Chunk:
     """Helper to build a dummy Chunk record for testing."""
     return Chunk(
@@ -27,14 +20,12 @@ def _make_mock_chunk(chunk_id: str) -> Chunk:
         section_title="MD&A",
         token_count=10
     )
-
 def test_rrf_fuse_empty() -> None:
     """
     Verifies that fusing two empty lists returns an empty list.
     """
     fused = rrf_fuse(bm25_results=[], vector_results=[], k=60)
     assert fused == []
-
 def test_rrf_fuse_single_system() -> None:
     """
     Verifies that when only one search system returns a hit, the RRF score is computed correctly.
@@ -43,16 +34,12 @@ def test_rrf_fuse_single_system() -> None:
     """
     chunk = _make_mock_chunk("chunk_1")
     bm25_hit = BM25Result(chunk=chunk, bm25_score=10.0, bm25_rank=1)
-    
     fused = rrf_fuse(bm25_results=[bm25_hit], vector_results=[], k=60)
-    
     assert len(fused) == 1
     assert fused[0].chunk.chunk_id == "chunk_1"
-    # Verify calculated RRF score matches the formula.
     assert pytest.approx(fused[0].rrf_score) == 1.0 / 61.0
     assert fused[0].bm25_rank == 1
     assert fused[0].vector_rank is None
-
 def test_rrf_fuse_both_systems() -> None:
     """
     Verifies that when a document matches in both systems, their reciprocal ranks accumulate.
@@ -62,12 +49,9 @@ def test_rrf_fuse_both_systems() -> None:
     chunk = _make_mock_chunk("chunk_1")
     bm25_hit = BM25Result(chunk=chunk, bm25_score=10.0, bm25_rank=1)
     vector_hit = VectorResult(chunk=chunk, vector_score=0.85, vector_rank=2)
-    
     fused = rrf_fuse(bm25_results=[bm25_hit], vector_results=[vector_hit], k=60)
-    
     assert len(fused) == 1
     assert fused[0].chunk.chunk_id == "chunk_1"
-    # Verify score accumulation matches formula.
     expected_score = (1.0 / 61.0) + (1.0 / 62.0)
     assert pytest.approx(fused[0].rrf_score) == expected_score
     assert fused[0].bm25_rank == 1

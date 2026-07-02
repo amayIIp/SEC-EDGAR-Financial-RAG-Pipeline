@@ -1,12 +1,6 @@
-# src/api/schemas.py
-# This module defines the Pydantic schemas for our FastAPI endpoints.
-# Pydantic validates incoming JSON request payloads against these schemas
-# and guarantees that outgoing responses conform strictly to the defined formats.
-
-from __future__ import annotations # Allow self-referencing type annotations.
-from typing import Any, Dict, List, Optional # Type helpers.
-from pydantic import BaseModel, Field # Pydantic classes for schema mapping and validation.
-
+from __future__ import annotations 
+from typing import Any, Dict, List, Optional 
+from pydantic import BaseModel, Field 
 class QueryFilters(BaseModel):
     """
     Optional filter parameters to restrict search candidate scope.
@@ -15,7 +9,6 @@ class QueryFilters(BaseModel):
     filing_type: Optional[str] = Field(default=None, description="Form type, e.g. 10-K or 10-Q")
     date_from: Optional[str] = Field(default=None, description="Earliest filing date as YYYY-MM-DD")
     date_to: Optional[str] = Field(default=None, description="Latest filing date as YYYY-MM-DD")
-
 class IngestRequest(BaseModel):
     """
     Request body schema for POST /ingest.
@@ -24,7 +17,6 @@ class IngestRequest(BaseModel):
     forms: List[str] = Field(default=["10-K", "10-Q"], description="SEC form types to download")
     limit: int = Field(default=3, description="Maximum number of filings to ingest")
     embedding_provider: str = Field(default="openai", description="Embedding model: 'openai' or 'bge'")
-
 class QueryRequest(BaseModel):
     """
     Request body schema for POST /query and POST /debug.
@@ -38,7 +30,6 @@ class QueryRequest(BaseModel):
     reranker_provider: Optional[str] = Field(default=None, description="Override reranker model provider.")
     generator_provider: Optional[str] = Field(default=None, description="Override LLM generator provider.")
     generator_model: Optional[str] = Field(default=None, description="Override specific LLM model name.")
-
 class Citation(BaseModel):
     """
     Individual citation record returned in /query answers.
@@ -50,7 +41,6 @@ class Citation(BaseModel):
     form: str = Field(..., description="Source form type.")
     filing_date: str = Field(..., description="Source filing date.")
     section: str = Field(..., description="Source filing section code, e.g. Item 7.")
-
 class QueryResponse(BaseModel):
     """
     Unified JSON response schema for POST /query.
@@ -59,7 +49,6 @@ class QueryResponse(BaseModel):
     citations: List[Citation] = Field(..., description="Citations mapping cited tags to source text and metadata.")
     latency_breakdown: Dict[str, float] = Field(..., description="Latency (ms) of each pipeline stage.")
     total_tokens: int = Field(..., description="Total tokens consumed in generation (prompt + completion).")
-
 class DebugResponse(BaseModel):
     """
     Verbose diagnostic response schema for POST /debug.

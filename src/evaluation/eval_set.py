@@ -1,20 +1,11 @@
-# src/evaluation/eval_set.py
-# This module manages the loading and initialization of our evaluation dataset.
-# The evaluation set contains questions, company ticker filters, and expected ground-truth answers.
-# If the eval JSONL file does not exist, we automatically generate it with our 12 default queries
-# to ensure the pipeline runs out-of-the-box.
-
-from __future__ import annotations # Allow self-referencing type annotations.
-import json # Standard library module to read and write JSON.
-import os # Standard library module to manage file paths.
-from typing import List # Type helper.
-from src.shared.config import cfg # Config settings loader.
-from src.shared.logging_setup import get_logger # Logger.
-from src.shared.models import EvalQuery, QueryType # Shared models.
-
+from __future__ import annotations 
+import json 
+import os 
+from typing import List 
+from src.shared.config import cfg 
+from src.shared.logging_setup import get_logger 
+from src.shared.models import EvalQuery, QueryType 
 log = get_logger(__name__)
-
-# List of 12 default seed evaluation queries across three difficulty levels.
 DEFAULT_EVAL_QUERIES = [
     {
         "id": "Q01",
@@ -137,31 +128,22 @@ DEFAULT_EVAL_QUERIES = [
         "expected_answer": "Amazon focuses on integrating generative AI into AWS services and retail tools. The language shifted from general machine learning to LLM orchestration and custom silicon chips (Trainium, Inferentia)."
     }
 ]
-
 def load_eval_set() -> List[EvalQuery]:
     """
     Loads the evaluation queries from data/eval/eval_set.jsonl.
     If the file does not exist, creates it with default queries first.
     """
     eval_file = cfg.evaluation.eval_set_path
-    
-    # Check if the file exists on the disk.
     if not os.path.exists(eval_file):
         log.info("eval_set_not_found", path=eval_file, action="creating_default_set")
         os.makedirs(os.path.dirname(eval_file), exist_ok=True)
-        
-        # Write the default queries to the JSONL file.
         with open(eval_file, "w", encoding="utf-8") as f:
             for query_dict in DEFAULT_EVAL_QUERIES:
                 f.write(json.dumps(query_dict) + "\n")
-                
-    # Read and parse the evaluation queries.
     eval_queries: List[EvalQuery] = []
     with open(eval_file, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                # Convert the JSON dictionary back to our structured Pydantic object.
                 eval_queries.append(EvalQuery(**json.loads(line)))
-                
     log.info("eval_set_loaded", path=eval_file, count=len(eval_queries))
     return eval_queries
