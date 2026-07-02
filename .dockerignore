@@ -1,0 +1,30 @@
+# .dockerignore
+# This file tells Docker which files and folders to ignore when building images.
+# Ignoring these avoids copying large or unnecessary files into the build context,
+# which makes the Docker build process much faster.
+
+# Ignore Python virtual environments (they contain local dependencies that aren't needed inside the Docker image).
+venv/
+.venv/
+
+# Ignore local data directories (raw filings, parsed JSON, vector/lexical indexes, and profiles are generated or mounted separately).
+data/
+
+# Ignore development notebooks (used for local EDA and experiments, not running the app).
+notebooks/
+
+# Ignore the Git repository files (not needed for running the application).
+.git/
+.gitignore
+
+# Ignore Python cache files (generated automatically when Python runs, no need to copy them).
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore local test caches and coverage reports.
+.pytest_cache/
+htmlcov/
+.coverage
+.cov/
